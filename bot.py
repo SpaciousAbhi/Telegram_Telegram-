@@ -38,16 +38,33 @@ except Exception as e:
 
 # Global Config Cache
 CACHED_CONFIG = None
+TASK_INDEX = {}  # Map: source_username.lower() -> [list of tasks]
+
+def rebuild_task_index(tasks):
+    """
+    Rebuilds the global TASK_INDEX for O(1) lookup.
+    """
+    global TASK_INDEX
+    TASK_INDEX = {}
+    for task in tasks:
+        source = task.get('source')
+        if source:
+            source = source.lower()
+            if source not in TASK_INDEX:
+                TASK_INDEX[source] = []
+            TASK_INDEX[source].append(task)
 
 async def get_cached_config():
     global CACHED_CONFIG
     if CACHED_CONFIG is None:
         CACHED_CONFIG = await load_config(client)
+        rebuild_task_index(CACHED_CONFIG.get('tasks', []))
     return CACHED_CONFIG
 
 async def update_cached_config(new_config):
     global CACHED_CONFIG
     CACHED_CONFIG = new_config
+    rebuild_task_index(new_config.get('tasks', []))
     await save_config(client, new_config)
 
 async def join_channel(channel_username):
@@ -78,26 +95,41 @@ def perform_replacements(text, task):
     """
     if not text:
         return text
+
+    # Helper function for applying a single replacement
+    def apply_single(txt, r_type, find, replace):
+        if not find or not replace:
+            return txt
         
-    # User Replacement
+        if r_type == 'user':
+            escaped_find = re.escape(find)
+            # Pattern: (?<!\w)@username\b
+            pattern = r'(?<!\w)' + escaped_find + r'\b'
+            return re.sub(pattern, replace, txt, flags=re.IGNORECASE)
+
+        elif r_type == 'link':
+            escaped_link = re.escape(find)
+            # Pattern: (?<!\w)link(?!\w)
+            pattern = r'(?<!\w)' + escaped_link + r'(?!\w)'
+            return re.sub(pattern, replace, txt, flags=re.IGNORECASE)
+        return txt
+
+    # 1. Process new 'replacements' list
+    replacements = task.get('replacements', [])
+    for rep in replacements:
+        text = apply_single(text, rep.get('type'), rep.get('find'), rep.get('replace'))
+
+    # 2. Process legacy User Replacement
     find_user = task.get('find_user')
     replace_user = task.get('replace_user')
-    
     if find_user and replace_user:
-        escaped_find = re.escape(find_user)
-        # Pattern: (?<!\w)@username\b
-        pattern = r'(?<!\w)' + escaped_find + r'\b'
-        text = re.sub(pattern, replace_user, text, flags=re.IGNORECASE)
+        text = apply_single(text, 'user', find_user, replace_user)
 
-    # Link Replacement
+    # 3. Process legacy Link Replacement
     find_link = task.get('find_link')
     replace_link = task.get('replace_link')
-    
     if find_link and replace_link:
-        escaped_link = re.escape(find_link)
-        # Pattern: (?<!\w)link(?!\w)
-        pattern = r'(?<!\w)' + escaped_link + r'(?!\w)'
-        text = re.sub(pattern, replace_link, text, flags=re.IGNORECASE)
+        text = apply_single(text, 'link', find_link, replace_link)
         
     return text
 
@@ -121,11 +153,10 @@ async def command_handler(event):
             "/add\n"
             "source: @SourceChannel\n"
             "target: @TargetChannel\n"
-            "find_user: @OldUser (optional)\n"
-            "replace_user: @NewUser (optional)\n"
-            "find_link: t.me/OldLink (optional)\n"
-            "replace_link: t.me/NewLink (optional)\n"
-            "```"
+            "replace_user: @OldUser -> @NewUser\n"
+            "replace_link: old.link -> new.link\n"
+            "```\n"
+            "You can add multiple `replace_user` and `replace_link` lines."
         )
         await event.reply(help_text)
         return
@@ -144,10 +175,20 @@ async def command_handler(event):
                 f"**ID: {i}**\n"
                 f"Source: `{task.get('source')}`\n"
                 f"Target: `{task.get('target')}`\n"
-                f"Find/Rep User: `{task.get('find_user', 'N/A')}` -> `{task.get('replace_user', 'N/A')}`\n"
-                f"Find/Rep Link: `{task.get('find_link', 'N/A')}` -> `{task.get('replace_link', 'N/A')}`\n"
-                "-------------------\n"
             )
+
+            # Show Replacements
+            replacements = task.get('replacements', [])
+            for rep in replacements:
+                msg += f"Rep ({rep.get('type')}): `{rep.get('find')}` -> `{rep.get('replace')}`\n"
+
+            # Legacy
+            if task.get('find_user'):
+                msg += f"Rep (user): `{task.get('find_user')}` -> `{task.get('replace_user')}`\n"
+            if task.get('find_link'):
+                msg += f"Rep (link): `{task.get('find_link')}` -> `{task.get('replace_link')}`\n"
+
+            msg += "-------------------\n"
         await event.reply(msg)
         return
 
@@ -172,7 +213,7 @@ async def command_handler(event):
 
     if text.startswith('/add'):
         lines = text.splitlines()
-        task = {}
+        task = {'replacements': []}
         
         for line in lines:
             if ':' in line:
@@ -180,8 +221,32 @@ async def command_handler(event):
                 key = key.strip().lower()
                 value = value.strip()
                 
-                if key in ['source', 'target', 'find_user', 'replace_user', 'find_link', 'replace_link']:
+                if key in ['source', 'target']:
                     task[key] = value
+
+                elif key == 'replace_user' or key == 'replace_link':
+                    if '->' in value:
+                        find, replace = value.split('->', 1)
+                        find = find.strip()
+                        replace = replace.strip()
+
+                        r_type = 'user' if key == 'replace_user' else 'link'
+                        task['replacements'].append({
+                            'type': r_type,
+                            'find': find,
+                            'replace': replace
+                        })
+                    else:
+                        # Fallback for legacy parsing if mixed or just using old style
+                        if key == 'replace_user':
+                             task['replace_user'] = value
+                        elif key == 'replace_link':
+                             task['replace_link'] = value
+
+                elif key == 'find_user':
+                     task['find_user'] = value
+                elif key == 'find_link':
+                     task['find_link'] = value
         
         # Validation
         if 'source' not in task or 'target' not in task:
@@ -228,19 +293,20 @@ async def message_monitor(event):
             
         chat_username = f"@{chat.username}"
         
-        for task in tasks:
-            source = task.get('source')
-            if source and source.lower() == chat_username.lower():
-                try:
-                    original_text = event.text or ""
-                    modified_text = perform_replacements(original_text, task)
-                    
-                    target = task.get('target')
-                    if target:
-                        await client.send_message(target, modified_text, file=event.message.media)
-                        logger.info(f"Forwarded message from {source} to {target}")
-                except Exception as e:
-                    logger.error(f"Error processing message from {source}: {e}")
+        # Look up tasks using index
+        relevant_tasks = TASK_INDEX.get(chat_username.lower(), [])
+
+        for task in relevant_tasks:
+            try:
+                original_text = event.text or ""
+                modified_text = perform_replacements(original_text, task)
+
+                target = task.get('target')
+                if target:
+                    await client.send_message(target, modified_text, file=event.message.media)
+                    logger.info(f"Forwarded message from {chat_username} to {target}")
+            except Exception as e:
+                logger.error(f"Error processing message from {chat_username}: {e}")
                     
     except Exception as e:
         logger.debug(f"Error in monitor loop: {e}")
