@@ -24,11 +24,15 @@ API_ID = os.getenv('API_ID')
 API_HASH = os.getenv('API_HASH')
 SESSION_STRING = os.getenv('SESSION_STRING')
 BOT_TOKEN = os.getenv('BOT_TOKEN')
+JULES_API_KEY = os.getenv('JULES_API_KEY')
 
 # Validation
 if not all([API_ID, API_HASH, SESSION_STRING, BOT_TOKEN]):
     logger.critical("❌ Missing Env Vars! Please ensure API_ID, API_HASH, SESSION_STRING, and BOT_TOKEN are set.")
     exit(1)
+
+if not JULES_API_KEY:
+    logger.warning("⚠️ JULES_API_KEY is missing! The AI Brain feature will not work.")
 
 async def main():
     # 1. Database Init
@@ -56,7 +60,10 @@ async def main():
     # --- Controller Bot Handlers (UI) ---
     bot_client.add_event_handler(commands.start_handler)
     bot_client.add_event_handler(callbacks.callback_handler)
+    # Note: ai_chat_handler might conflict with wizard_input_handler if we aren't careful.
+    # The wizard handler checks state first. We should register AI handler LAST.
     bot_client.add_event_handler(callbacks.wizard_input_handler)
+    bot_client.add_event_handler(commands.ai_chat_handler)
 
     # --- Userbot Handlers (Worker) ---
     user_client.add_event_handler(live_monitor)
