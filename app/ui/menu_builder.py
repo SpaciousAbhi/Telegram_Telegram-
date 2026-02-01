@@ -37,6 +37,15 @@ class MenuBuilder:
         ]
 
     @staticmethod
+    def task_edit_menu(task_id):
+        tid = str(task_id).encode()
+        return [
+            [Button.inline("Change Source", b"edit_source_" + tid)],
+            [Button.inline("Change Target", b"edit_target_" + tid)],
+            [Button.inline("🔙 Back to Task", b"view_task_" + tid)]
+        ]
+
+    @staticmethod
     def config_toggles(current_config):
         """
         Dynamic menu for toggling settings during Wizard.

@@ -42,6 +42,11 @@ async def process_message(client, event, task):
             global_settings=global_rules
         )
 
+        # Check if skipped
+        if modified_text is None:
+             logger.info(f"Task {task.id}: Skipped msg {event.id} based on rules.")
+             return
+
         # 2. Forward (Send as new message to avoid "Forwarded from" if desired,
         # or use actual forward. Here we use send_message for cleaner output)
         if event.media:
@@ -65,8 +70,20 @@ async def process_message(client, event, task):
         # Send to Log Channel
         if log_channel:
             try:
+                # Resolve entity if it's a string (username)
+                log_entity = log_channel
+                if isinstance(log_channel, str) and not log_channel.startswith('-100'):
+                     try:
+                         log_entity = await client.get_entity(log_channel)
+                     except:
+                         # Fallback: maybe it's a numeric string ID?
+                         if log_channel.lstrip('-').isdigit():
+                             log_entity = int(log_channel)
+
                 # Format a nice report
                 changes_text = "\n".join([f"🔹 {c}" for c in changes]) if changes else "No changes."
+                status_emoji = "✅" if not changes else "⚠️"
+
                 report = (
                     f"**🔄 Forward Report**\n"
                     f"**Source:** {task.source_title}\n"
@@ -74,9 +91,9 @@ async def process_message(client, event, task):
                     f"**Msg ID:** `{event.id}`\n\n"
                     f"**Actions:**\n{changes_text}"
                 )
-                await client.send_message(log_channel, report, link_preview=False)
+                await client.send_message(log_entity, report, link_preview=False)
             except Exception as e:
-                logger.error(f"Failed to send log to channel: {e}")
+                logger.error(f"Failed to send log to channel '{log_channel}': {e}")
 
     except Exception as e:
         logger.error(f"Task {task.id}: Failed to forward Msg {event.id}: {e}")
@@ -93,38 +110,46 @@ async def live_monitor(event):
     """
     Listens for new messages and routes them to active tasks.
     """
-    # optimization: check if chat_id matches any active source in DB (cached)
-    chat_id = event.chat_id
+    try:
+        chat = await event.get_chat()
+        chat_id = chat.id
+        chat_username = chat.username.lower() if chat.username else None
 
-    # For now, we query DB. In prod, cache active sources in memory.
+        logger.info(f"Incoming Msg from ID: {chat_id} Username: {chat_username}")
+    except Exception as e:
+        logger.debug(f"Could not resolve chat: {e}")
+        return
+
     with get_db() as db:
-        # We need to match by ID or Username.
-        # Telethon event.chat_id is integer. Source in DB might be username or int.
-        # This matching logic needs to be robust.
-        # For this prototype, we assume we can resolve the entity.
-
-        # Helper: Try to find tasks where source matches this event
-        # (This is tricky without exact ID matching, assumes source_id is int or we resolve it)
-        # For simplicity in this step, let's assume we match roughly.
-
         # Fetch all active live tasks
         tasks = db.query(Task).filter(Task.is_active == True, Task.mode == 'live').all()
 
         matching_tasks = []
         for t in tasks:
-            # Check if this event comes from the task source
-            # We compare InputChannel IDs or Usernames
-            try:
-                # We can't easily compare strings to IDs without a cache or get_entity.
-                # A robust way is to rely on the userbot knowing the ID.
-                # For this implementation, we will check if the event.chat matches.
-                sender = await event.get_chat()
-                sender_id = str(sender.id)
-                sender_username = f"@{sender.username}" if sender.username else ""
+            # Source in DB is a string (could be "@username" or "12345" or "-10012345")
+            db_source = t.source_id.lower().strip()
 
-                if str(t.source_id) == sender_id or (sender_username and t.source_id.lower() == sender_username.lower()):
-                    matching_tasks.append(t)
-            except Exception:
+            # 1. Check Username Match (@user == @user)
+            if chat_username and db_source.startswith('@') and db_source == f"@{chat_username}":
+                matching_tasks.append(t)
+                continue
+
+            # 2. Check ID Match (123 == 123)
+            # Telethon IDs can be tricky (-100 prefix).
+            # We normalize both to strings and try to match end-to-end or containment
+            str_chat_id = str(chat_id)
+
+            # Simple exact match
+            if db_source == str_chat_id:
+                matching_tasks.append(t)
+                continue
+
+            # Telethon Channel ID fix (sometimes user stores "-100123" but event is "123")
+            # Or user stores "123" and event is "-100123"
+            if db_source.endswith(str_chat_id) or str_chat_id.endswith(db_source):
+                # Ensure it's not a partial match of a different number (e.g. 123 matching 9123)
+                # This is "good enough" for V1 but ideally we resolve entity on Task Creation.
+                matching_tasks.append(t)
                 continue
 
         if not matching_tasks:
@@ -132,4 +157,5 @@ async def live_monitor(event):
 
         # Execute
         for task in matching_tasks:
+             logger.info(f"Match found! Forwarding to Task {task.id}")
              await process_message(event.client, event, task)

@@ -34,30 +34,40 @@ class ContentTransformer:
         # THEN run entity stripping? Or vice versa?
         # Let's do Regex First (Modify text), then strip entities if they match rules.
 
-        # --- A. Global Regex Replacements ---
+        # --- A. Global Replacements & Filters ---
         for rule in rules:
             find_pattern = rule.get('find')
             replace_with = rule.get('replace', '')
 
-            if not find_pattern:
-                continue
-
-            # Create safe regex
-            # If user provided a regex (starts with r'..') use it, else escape
-            # For simplicity, we treat everything as literal string match unless it looks like regex
-            # But "looks like regex" is risky. Let's do literal case-insensitive replace for now
-            # OR simple regex for words.
+            if not find_pattern: continue
 
             try:
-                # Case insensitive find
-                pattern = re.compile(re.escape(find_pattern), re.IGNORECASE)
+                # 1. SKIP MESSAGE Filter (Special Flag: 'SKIP_MESSAGE')
+                if replace_with.strip() == 'SKIP_MESSAGE':
+                    if re.search(re.escape(find_pattern), text, re.IGNORECASE):
+                        log_summary.append(f"Skipped message containing '{find_pattern}'")
+                        return None, log_summary # Return None to signal skip
 
-                # Check if present
-                if pattern.search(text):
-                    text = pattern.sub(replace_with, text)
-                    log_summary.append(f"Replaced '{find_pattern}' -> '{replace_with}'")
+                # 2. DELETE LINE Filter (Special Flag: 'DELETE_LINE')
+                elif replace_with.strip() == 'DELETE_LINE':
+                    lines = text.split('\n')
+                    new_lines = []
+                    for line in lines:
+                        if re.search(re.escape(find_pattern), line, re.IGNORECASE):
+                            log_summary.append(f"Deleted line containing '{find_pattern}'")
+                        else:
+                            new_lines.append(line)
+                    text = '\n'.join(new_lines)
+
+                # 3. Standard Replacement
+                else:
+                    pattern = re.compile(re.escape(find_pattern), re.IGNORECASE)
+                    if pattern.search(text):
+                        text = pattern.sub(replace_with, text)
+                        log_summary.append(f"Replaced '{find_pattern}' -> '{replace_with}'")
+
             except Exception as e:
-                logger.error(f"Regex error for rule {find_pattern}: {e}")
+                logger.error(f"Rule error {find_pattern}: {e}")
 
         # --- B. Config: Strip Links (Naive) ---
         if config.get('strip_links'):

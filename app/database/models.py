@@ -40,7 +40,13 @@ class AppLog(Base):
     task_id = Column(Integer, nullable=True)
 
 # Database Setup
-engine = create_engine('sqlite:///userbot.db', echo=False)
+DATABASE_URL = os.getenv('DATABASE_URL')
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+DB_URI = DATABASE_URL if DATABASE_URL else 'sqlite:///userbot.db'
+
+engine = create_engine(DB_URI, echo=False)
 SessionLocal = sessionmaker(bind=engine)
 
 def init_db():

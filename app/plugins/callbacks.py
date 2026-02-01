@@ -188,9 +188,27 @@ async def callback_handler(event):
             db.query(Task).filter(Task.id == tid).delete()
             db.commit()
         await event.answer("Task deleted!", alert=True)
-        # Return to list
-        # Re-trigger list logic (copy-paste or recursive call - keeping it simple here)
         await event.edit("Task Deleted.", buttons=MenuBuilder.back_button(b"list_tasks"))
+        return
+
+    # --- Edit Task ---
+    if data.startswith('edit_') and not data.startswith('edit_source_') and not data.startswith('edit_target_'):
+        tid = int(data.split('_')[1])
+        await event.edit(f"**✏️ Edit Task #{tid}**\nWhat would you like to change?", buttons=MenuBuilder.task_edit_menu(tid))
+        return
+
+    if data.startswith('edit_source_'):
+        tid = int(data.split('_')[2])
+        StateMachine.set_state(user_id, 'editing_task_id', tid)
+        StateMachine.set_step(user_id, 'editing_source')
+        await event.edit(f"**✏️ Edit Source for Task #{tid}**\n\nPlease send the new Source Channel (ID/Username).", buttons=MenuBuilder.cancel_button())
+        return
+
+    if data.startswith('edit_target_'):
+        tid = int(data.split('_')[2])
+        StateMachine.set_state(user_id, 'editing_task_id', tid)
+        StateMachine.set_step(user_id, 'editing_target')
+        await event.edit(f"**✏️ Edit Target for Task #{tid}**\n\nPlease send the new Target Channel (ID/Username).", buttons=MenuBuilder.cancel_button())
         return
 
 
@@ -233,6 +251,37 @@ async def wizard_input_handler(event):
             await event.respond(f"❌ Error finding channel: {e}\nPlease try again.", buttons=MenuBuilder.cancel_button())
         return
 
+    # --- Editing Inputs ---
+    if step == 'editing_source':
+        tid = StateMachine.get_state(user_id).get('editing_task_id')
+        new_source = event.text.strip()
+        with get_db() as db:
+            task = db.query(Task).filter(Task.id == tid).first()
+            if task:
+                task.source_id = new_source
+                task.source_title = new_source
+                db.commit()
+                await event.respond(f"✅ Task #{tid} Source updated to: `{new_source}`", buttons=MenuBuilder.task_edit_menu(tid))
+            else:
+                await event.respond("❌ Task not found.", buttons=MenuBuilder.main_menu())
+        StateMachine.clear_state(user_id)
+        return
+
+    if step == 'editing_target':
+        tid = StateMachine.get_state(user_id).get('editing_task_id')
+        new_target = event.text.strip()
+        with get_db() as db:
+            task = db.query(Task).filter(Task.id == tid).first()
+            if task:
+                task.target_id = new_target
+                task.target_title = new_target
+                db.commit()
+                await event.respond(f"✅ Task #{tid} Target updated to: `{new_target}`", buttons=MenuBuilder.task_edit_menu(tid))
+            else:
+                await event.respond("❌ Task not found.", buttons=MenuBuilder.main_menu())
+        StateMachine.clear_state(user_id)
+        return
+
     # --- Settings: Log Channel ---
     if step == 'awaiting_log_channel':
         channel = event.text
@@ -256,7 +305,9 @@ async def wizard_input_handler(event):
         await event.respond(
             f"FIND: `{event.text}`\n\n"
             "Step 2: Send the **REPLACEMENT** text.\n"
-            "(Send `BLANK` to delete the text/link completely).",
+            "- Send `BLANK` to delete the text/link.\n"
+            "- Send `SKIP_MESSAGE` to skip the whole message.\n"
+            "- Send `DELETE_LINE` to delete the whole line.",
             buttons=MenuBuilder.cancel_button()
         )
         return
