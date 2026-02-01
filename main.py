@@ -8,7 +8,7 @@ from telethon.sessions import StringSession
 # App Imports
 from app.database.db import initialize_database
 from app.plugins import commands, callbacks
-from app.core.engine import live_monitor
+from app.core.engine import live_monitor, resolve_and_join_tasks
 from app.core.history import history_worker
 
 # Load Env
@@ -64,6 +64,10 @@ async def main():
     logger.info("Event Handlers Registered.")
 
     # 4. Start Background Workers
+    # Perform startup resolution for Userbot
+    logger.info("Performing Startup Resolution...")
+    await resolve_and_join_tasks(user_client)
+
     asyncio.create_task(history_worker(user_client))
     logger.info("History Worker Started.")
 

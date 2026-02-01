@@ -1,12 +1,74 @@
 import asyncio
 import logging
 from telethon import events
+from telethon.tl.functions.channels import JoinChannelRequest
 from app.database.db import get_db
 from app.database.models import Task, AppLog, GlobalSettings
 from app.core.transformer import ContentTransformer
 import json
 
 logger = logging.getLogger(__name__)
+
+async def resolve_and_join_tasks(client):
+    """
+    On startup, iterate all tasks, resolve their entities (usernames -> IDs),
+    and attempt to join source channels.
+    """
+    logger.info("Starting Task Resolution & Auto-Join...")
+
+    with get_db() as db:
+        tasks = db.query(Task).filter(Task.is_active == True).all()
+
+        for task in tasks:
+            # 1. Resolve Source
+            try:
+                # If it's already a number, we might skip or re-verify
+                # But let's try to get entity to ensure we are in it
+                entity = await client.get_entity(task.source_id)
+
+                # Get the real numeric ID
+                real_id = str(entity.id)
+                # Telethon often returns positive ID for channels, but events might be -100...
+                # We typically want the "packed" ID or just the raw ID.
+                # Let's save the raw ID. The matching logic handles the -100 prefix check.
+
+                if task.source_id != real_id:
+                    logger.info(f"Resolved Source: {task.source_id} -> {real_id}")
+                    task.source_id = real_id
+
+                # Update Title if possible
+                if hasattr(entity, 'title'):
+                    task.source_title = entity.title
+
+                # 2. Join
+                try:
+                    await client(JoinChannelRequest(entity))
+                    logger.info(f"Joined {task.source_title}")
+                except Exception as e:
+                    # 'UserAlreadyParticipantError' is common/fine
+                    if "already" not in str(e).lower():
+                        logger.warning(f"Failed to join {task.source_id}: {e}")
+
+            except Exception as e:
+                logger.error(f"Could not resolve Source {task.source_id}: {e}")
+
+            # 3. Resolve Target (Just for ID consistency, no join needed usually if public)
+            try:
+                entity_target = await client.get_entity(task.target_id)
+                real_target_id = str(entity_target.id)
+
+                if task.target_id != real_target_id:
+                     logger.info(f"Resolved Target: {task.target_id} -> {real_target_id}")
+                     task.target_id = real_target_id
+
+                if hasattr(entity_target, 'title'):
+                    task.target_title = entity_target.title
+
+            except Exception as e:
+                logger.error(f"Could not resolve Target {task.target_id}: {e}")
+
+        db.commit()
+    logger.info("Task Resolution Complete.")
 
 async def process_message(client, event, task):
     """
@@ -49,10 +111,15 @@ async def process_message(client, event, task):
 
         # 2. Forward (Send as new message to avoid "Forwarded from" if desired,
         # or use actual forward. Here we use send_message for cleaner output)
+        try:
+            target_entity = await client.get_entity(int(task.target_id)) if task.target_id.lstrip('-').isdigit() else task.target_id
+        except:
+            target_entity = task.target_id
+
         if event.media:
-            await client.send_file(task.target_id, event.media, caption=modified_text)
+            await client.send_file(target_entity, event.media, caption=modified_text)
         else:
-            await client.send_message(task.target_id, modified_text)
+            await client.send_message(target_entity, modified_text)
 
         # 3. Update State (Last Processed ID)
         # Note: In a real high-concurrency DB, we might want to batch this.
