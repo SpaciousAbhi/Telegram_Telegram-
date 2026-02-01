@@ -194,11 +194,15 @@ async def callback_handler(event):
         return
 
 
-@events.register(events.NewMessage(chats='me'))
+@events.register(events.NewMessage)
 async def wizard_input_handler(event):
     """Handles text input during the wizard flow."""
-    user_id = event.sender_id
-    step = StateMachine.get_step(user_id)
+    if event.is_private:
+        # Only accept private messages to the bot
+        user_id = event.sender_id
+        step = StateMachine.get_step(user_id)
+    else:
+        return
 
     if not step:
         return # Not in wizard
@@ -206,16 +210,22 @@ async def wizard_input_handler(event):
     # --- Step 1: Source ---
     if step == 'awaiting_source':
         try:
-            entity = await event.client.get_entity(event.text)
-            title = getattr(entity, 'title', entity.username)
-            username = f"@{entity.username}" if entity.username else str(entity.id)
+            # Note: A Bot cannot resolve public channel Usernames unless it has seen them before.
+            # This is a limitation of the Bot API vs Userbot.
+            # However, since we are just saving the String ID/Username for the Userbot to use later,
+            # we can just accept the string provided by the user without full validation
+            # OR we warn them.
+            # Ideally, the user provides a link or @username.
 
-            StateMachine.set_state(user_id, 'source', username)
-            StateMachine.set_state(user_id, 'source_title', title)
+            # Simple validation: valid format?
+            input_str = event.text.strip()
+
+            StateMachine.set_state(user_id, 'source', input_str)
+            StateMachine.set_state(user_id, 'source_title', input_str) # We can't fetch title easily as a Bot
             StateMachine.set_step(user_id, 'awaiting_target')
 
             await event.respond(
-                f"✅ Selected Source: **{title}**\n\n"
+                f"✅ Selected Source: **{input_str}**\n\n"
                 "**Step 2/3:** Now send the **Target Channel**.",
                 buttons=MenuBuilder.cancel_button()
             )
@@ -278,12 +288,10 @@ async def wizard_input_handler(event):
     # --- Step 2: Target ---
     if step == 'awaiting_target':
         try:
-            entity = await event.client.get_entity(event.text)
-            title = getattr(entity, 'title', entity.username)
-            username = f"@{entity.username}" if entity.username else str(entity.id)
+            input_str = event.text.strip()
 
-            StateMachine.set_state(user_id, 'target', username)
-            StateMachine.set_state(user_id, 'target_title', title)
+            StateMachine.set_state(user_id, 'target', input_str)
+            StateMachine.set_state(user_id, 'target_title', input_str)
             StateMachine.set_step(user_id, 'config_mode')
 
             # Default Config
@@ -291,7 +299,7 @@ async def wizard_input_handler(event):
             StateMachine.set_state(user_id, 'config', default_config)
 
             await event.respond(
-                f"✅ Selected Target: **{title}**\n\n"
+                f"✅ Selected Target: **{input_str}**\n\n"
                 "**Step 3/3:** Configure Rules.",
                 buttons=MenuBuilder.config_toggles(default_config)
             )

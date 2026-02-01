@@ -23,39 +23,50 @@ logger = logging.getLogger(__name__)
 API_ID = os.getenv('API_ID')
 API_HASH = os.getenv('API_HASH')
 SESSION_STRING = os.getenv('SESSION_STRING')
+BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 async def main():
     # 1. Database Init
     initialize_database()
     logger.info("Database Initialized.")
 
-    # 2. Client Init
+    # 2. Clients Init
     try:
-        client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
-        await client.start()
-        logger.info(f"Bot started as: {(await client.get_me()).username}")
+        # Userbot (The Worker)
+        user_client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
+        await user_client.start()
+        logger.info(f"Userbot started as: {(await user_client.get_me()).username}")
+
+        # Bot (The Controller)
+        bot_client = TelegramClient('bot_session', int(API_ID), API_HASH)
+        await bot_client.start(bot_token=BOT_TOKEN)
+        logger.info(f"Controller Bot started as: {(await bot_client.get_me()).username}")
+
     except Exception as e:
-        logger.critical(f"Failed to start client: {e}")
+        logger.critical(f"Failed to start clients: {e}")
         return
 
-    # 3. Load Plugins (Event Handlers)
-    # Commands
-    client.add_event_handler(commands.start_handler)
-    # Callbacks (Buttons)
-    client.add_event_handler(callbacks.callback_handler)
-    # Wizard Input
-    client.add_event_handler(callbacks.wizard_input_handler)
-    # Live Monitor
-    client.add_event_handler(live_monitor)
+    # 3. Register Event Handlers
+
+    # --- Controller Bot Handlers (UI) ---
+    bot_client.add_event_handler(commands.start_handler)
+    bot_client.add_event_handler(callbacks.callback_handler)
+    bot_client.add_event_handler(callbacks.wizard_input_handler)
+
+    # --- Userbot Handlers (Worker) ---
+    user_client.add_event_handler(live_monitor)
 
     logger.info("Event Handlers Registered.")
 
     # 4. Start Background Workers
-    asyncio.create_task(history_worker(client))
+    asyncio.create_task(history_worker(user_client))
     logger.info("History Worker Started.")
 
-    # 5. Run
-    await client.run_until_disconnected()
+    # 5. Run Both
+    await asyncio.gather(
+        user_client.run_until_disconnected(),
+        bot_client.run_until_disconnected()
+    )
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
