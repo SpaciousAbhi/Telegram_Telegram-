@@ -18,22 +18,29 @@ async def resolve_and_join_tasks(client):
 
     with get_db() as db:
         tasks = db.query(Task).filter(Task.is_active == True).all()
+        logger.info(f"Found {len(tasks)} active tasks in DB.")
 
         for task in tasks:
+            logger.info(f"Processing Task #{task.id}: Source='{task.source_id}' Target='{task.target_id}'")
+
             # 1. Resolve Source
             try:
                 # If it's already a number, we might skip or re-verify
                 # But let's try to get entity to ensure we are in it
-                entity = await client.get_entity(task.source_id)
+                try:
+                    # Handle case where user entered integer string
+                    input_arg = int(task.source_id) if task.source_id.lstrip('-').isdigit() else task.source_id
+                except:
+                    input_arg = task.source_id
+
+                entity = await client.get_entity(input_arg)
 
                 # Get the real numeric ID
                 real_id = str(entity.id)
-                # Telethon often returns positive ID for channels, but events might be -100...
-                # We typically want the "packed" ID or just the raw ID.
-                # Let's save the raw ID. The matching logic handles the -100 prefix check.
+                logger.info(f" -> Resolved '{task.source_id}' to ID: {real_id} Title: {getattr(entity, 'title', 'N/A')}")
 
                 if task.source_id != real_id:
-                    logger.info(f"Resolved Source: {task.source_id} -> {real_id}")
+                    logger.info(f" -> Updating DB Source: {task.source_id} -> {real_id}")
                     task.source_id = real_id
 
                 # Update Title if possible
@@ -43,14 +50,16 @@ async def resolve_and_join_tasks(client):
                 # 2. Join
                 try:
                     await client(JoinChannelRequest(entity))
-                    logger.info(f"Joined {task.source_title}")
+                    logger.info(f" -> Joined {task.source_title}")
                 except Exception as e:
                     # 'UserAlreadyParticipantError' is common/fine
                     if "already" not in str(e).lower():
-                        logger.warning(f"Failed to join {task.source_id}: {e}")
+                        logger.warning(f" -> Failed to join {task.source_id}: {e}")
+                    else:
+                        logger.info(" -> Already a member.")
 
             except Exception as e:
-                logger.error(f"Could not resolve Source {task.source_id}: {e}")
+                logger.error(f" -> Could not resolve Source {task.source_id}: {e}")
 
             # 3. Resolve Target (Just for ID consistency, no join needed usually if public)
             try:
