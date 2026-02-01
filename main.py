@@ -25,6 +25,11 @@ API_HASH = os.getenv('API_HASH')
 SESSION_STRING = os.getenv('SESSION_STRING')
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 
+# Validation
+if not all([API_ID, API_HASH, SESSION_STRING, BOT_TOKEN]):
+    logger.critical("❌ Missing Env Vars! Please ensure API_ID, API_HASH, SESSION_STRING, and BOT_TOKEN are set.")
+    exit(1)
+
 async def main():
     # 1. Database Init
     initialize_database()
