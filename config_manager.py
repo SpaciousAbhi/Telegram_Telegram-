@@ -4,6 +4,26 @@ import logging
 # Unique header to identify the configuration message in Saved Messages
 CONFIG_HEADER = "#USERBOT_CONFIG_V1"
 
+# Global Config Cache
+CACHED_CONFIG = None
+
+async def get_cached_config(client):
+    """
+    Returns the cached configuration, loading it if necessary.
+    """
+    global CACHED_CONFIG
+    if CACHED_CONFIG is None:
+        CACHED_CONFIG = await load_config(client)
+    return CACHED_CONFIG
+
+async def update_cached_config(client, new_config):
+    """
+    Updates the cached configuration and saves it to Telegram.
+    """
+    global CACHED_CONFIG
+    CACHED_CONFIG = new_config
+    await save_config(client, new_config)
+
 async def load_config(client):
     """
     Searches for the configuration message in 'Saved Messages' (me).
