@@ -2,29 +2,15 @@ import unittest
 import sys
 from unittest.mock import MagicMock
 
-# Mock telethon before importing bot
+# Mock telethon before importing utils
 sys.modules['telethon'] = MagicMock()
 sys.modules['telethon.sync'] = MagicMock()
 sys.modules['telethon.sessions'] = MagicMock()
 sys.modules['telethon.tl.functions.channels'] = MagicMock()
 sys.modules['telethon.tl.types'] = MagicMock()
 
-# Setup the mock client
-mock_client = MagicMock()
-# Allow decorators
-mock_client.on = MagicMock(return_value=lambda x: x)
-
-# Mock TelegramClient constructor to return our mock_client
-sys.modules['telethon'].TelegramClient.return_value = mock_client
-
-import os
-# Mock env vars
-os.environ['API_ID'] = '12345'
-os.environ['API_HASH'] = 'fakehash'
-os.environ['SESSION_STRING'] = 'fakesession'
-
-# Now import bot
-from bot import perform_replacements
+# Now import utils
+from utils import perform_replacements
 
 class TestReplacements(unittest.TestCase):
     def test_basic_replacement(self):
