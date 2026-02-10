@@ -9,6 +9,8 @@ A deploy-ready Telegram Userbot that monitors public channels and forwards posts
 -   **Persistent Configuration**: Saves your task list to your "Saved Messages" on Telegram, so you never lose your settings, even on ephemeral hosting like Heroku.
 -   **Chat-based Management**: Manage tasks entirely through Telegram "Saved Messages" commands (`/add`, `/list`, `/del`).
 -   **Auto-Join**: Automatically joins source channels to ensure reliable monitoring.
+-   **Reliability**: Includes automatic retry logic for network operations to prevent message loss.
+-   **Modular Design**: Clean codebase split into handlers and utilities for easy maintenance.
 
 ## Deployment
 
@@ -21,6 +23,23 @@ A deploy-ready Telegram Userbot that monitors public channels and forwards posts
     ```bash
     pip install telethon
     python3 -c "from telethon.sync import TelegramClient; from telethon.sessions import StringSession; print(TelegramClient(StringSession(), 'YOUR_API_ID', 'YOUR_API_HASH').start().session.save())"
+    ```
+
+### Docker Deployment (Recommended)
+
+1.  **Build the image**:
+    ```bash
+    docker build -t telegram-userbot .
+    ```
+
+2.  **Run the container**:
+    ```bash
+    docker run -d \
+      -e API_ID=your_api_id \
+      -e API_HASH=your_api_hash \
+      -e SESSION_STRING=your_session_string \
+      --name my-userbot \
+      telegram-userbot
     ```
 
 ### Heroku Deployment
@@ -70,3 +89,11 @@ replace_link: my_link
 
 -   **Persistence**: The bot checks "Saved Messages" for a pinned message containing your config. If it doesn't exist, it creates one. Do not delete this message if you want to keep your tasks!
 -   **Membership**: When you add a task, the userbot will attempt to join the source channel if it is not already a member.
+-   **Retries**: If sending a message fails (e.g., due to network issues), the bot will retry up to 3 times with exponential backoff.
+
+## Project Structure
+
+-   `bot.py`: Entry point and client initialization.
+-   `config_manager.py`: Handles loading and saving configuration to Telegram.
+-   `utils.py`: Shared utility functions (replacements, channel joining).
+-   `handlers/`: Contains the logic for commands and message monitoring.
