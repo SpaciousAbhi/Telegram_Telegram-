@@ -23,8 +23,8 @@ os.environ['API_ID'] = '12345'
 os.environ['API_HASH'] = 'fakehash'
 os.environ['SESSION_STRING'] = 'fakesession'
 
-# Now import bot
-from bot import perform_replacements
+# Now import utils
+from utils import perform_replacements
 
 class TestReplacements(unittest.TestCase):
     def test_basic_replacement(self):
